@@ -20,6 +20,10 @@
     },
     "seed": {
       "outputs": []
+    },
+    "reindex": {
+      "cache": false,
+      "outputs": []
     }
   }
 }

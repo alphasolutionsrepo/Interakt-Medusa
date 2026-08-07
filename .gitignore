@@ -19,6 +19,9 @@ coverage
 # TypeScript incremental build cache
 *.tsbuildinfo
 
+# Generated search documents (regenerate with: yarn reindex dry-run out=...)
+apps/backend/medusa-products.json
+
 # Next.js
 **/.next/
 **/out/

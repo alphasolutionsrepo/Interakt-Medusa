@@ -25,7 +25,17 @@ export function unique<T>(items: T[]): T[] {
  */
 export async function pagedGraph<T = Record<string, unknown>>(
   container: MedusaContainer,
-  config: { entity: string; fields: string[]; filters?: Record<string, unknown> },
+  config: {
+    entity: string
+    fields: string[]
+    filters?: Record<string, unknown>
+    /**
+     * Pricing/inventory context, e.g.
+     * `{ variants: { calculated_price: QueryContext({ currency_code: "usd" }) } }`.
+     * Without it `calculated_price` cannot be resolved.
+     */
+    context?: Record<string, unknown>
+  },
   pageSize = 500
 ): Promise<T[]> {
   const query = container.resolve(ContainerRegistrationKeys.QUERY)
