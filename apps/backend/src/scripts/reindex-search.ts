@@ -1,26 +1,18 @@
 import { writeFileSync } from "fs"
 import path from "path"
 import { MedusaContainer } from "@medusajs/framework"
-import {
-  ContainerRegistrationKeys,
-  MedusaError,
-  QueryContext,
-  getTotalVariantAvailability,
-} from "@medusajs/framework/utils"
-import {
-  AvailabilityMap,
-  DocumentWarning,
-  GraphProduct,
-  SEARCH_PRODUCT_FIELDS,
-  SearchDocument,
-  toSearchDocument,
-} from "../workflows/search-indexing/document"
-import { chunk, pagedGraph, since, unique } from "./catalog/util"
+import { ContainerRegistrationKeys } from "@medusajs/framework/utils"
+import { DocumentWarning, SearchDocument } from "../workflows/search-indexing/document"
+import { reindexSearchWorkflow } from "../workflows/search-indexing/reindex-search"
+import { SEARCH_INDEX_MODULE } from "../modules/search-index"
+import SearchIndexClientService from "../modules/search-index/service"
+import { since } from "./catalog/util"
 
 /**
- * Build the search documents for every published product.
+ * Build the search documents for every published product, and push them.
  *
- *   yarn reindex dry-run                              report only, writes nothing
+ *   yarn reindex                                      build and push
+ *   yarn reindex dry-run                              report only, pushes nothing
  *   yarn reindex dry-run out=./medusa-products.json   also write the documents to a file
  *   yarn reindex limit=5 verbose
  *   yarn reindex only=PROD-0001,prod_01K...           by external_id OR product id
@@ -29,21 +21,21 @@ import { chunk, pagedGraph, since, unique } from "./catalog/util"
  * variadic positional and its yargs parser rejects unknown --options before
  * they ever reach this script.
  *
- * Pushing to the search index is NOT wired up yet — the index does not exist.
- * Run `dry-run out=...` to produce the documents, create the index from them,
- * then the push path lands in a follow-up.
+ * Configuration lives in the `searchIndex` module (see medusa-config.ts), so
+ * this and the event subscribers agree on the index and the currency.
+ *
+ * This is also the repair path. Product edits sync automatically via
+ * src/subscribers/search-index-product-*.ts, but two things that path cannot
+ * cover: a bulk import fires an event per product and will exhaust Interakt's
+ * rate limit, and price/inventory/category changes do not emit `product.*`
+ * events at all. Run this after either.
  */
-
-const CURRENCY = process.env.SEARCH_INDEX_CURRENCY ?? "usd"
-
-/** Availability is fetched in batches so the internal query stays bounded. */
-const AVAILABILITY_BATCH = 1000
 
 interface Options {
   dryRun: boolean
   out?: string
   limit?: number
-  only?: Set<string>
+  only?: string[]
   verbose: boolean
 }
 
@@ -64,26 +56,9 @@ function parseArgs(args: string[]): Options {
     dryRun: flag("dry-run"),
     out: value("out"),
     limit: limit ? Number(limit) : undefined,
-    only: only ? new Set(only.split(",").map((s) => s.trim())) : undefined,
+    only: only ? only.split(",").map((s) => s.trim()) : undefined,
     verbose: flag("verbose"),
   }
-}
-
-async function fetchAvailability(
-  container: MedusaContainer,
-  variantIds: string[]
-): Promise<AvailabilityMap> {
-  const query = container.resolve(ContainerRegistrationKeys.QUERY)
-  const out: AvailabilityMap = {}
-
-  for (const batch of chunk(variantIds, AVAILABILITY_BATCH)) {
-    const result = await getTotalVariantAvailability(query, {
-      variant_ids: batch,
-    })
-    Object.assign(out, result)
-  }
-
-  return out
 }
 
 export default async function reindexSearch({
@@ -94,53 +69,45 @@ export default async function reindexSearch({
   args: string[]
 }) {
   const logger = container.resolve(ContainerRegistrationKeys.LOGGER)
+  const searchIndex = container.resolve<SearchIndexClientService>(SEARCH_INDEX_MODULE)
   const options = parseArgs(args ?? [])
   const started = Date.now()
+  const currency = searchIndex.currency
 
   logger.info(`=== search reindex ===${options.dryRun ? " (dry run)" : ""}`)
 
-  // --- Load products -------------------------------------------------------
-  // `calculated_price` is unresolvable without a pricing context; currency_code
-  // alone is sufficient (region_id only drives tax-inclusivity, unused here).
-  let products = await pagedGraph<GraphProduct>(container, {
-    entity: "product",
-    fields: SEARCH_PRODUCT_FIELDS,
-    filters: { status: "published" },
-    context: {
-      variants: { calculated_price: QueryContext({ currency_code: CURRENCY }) },
-    },
-  })
-
-  if (options.only) {
-    products = products.filter(
-      (p) =>
-        options.only!.has(p.id) ||
-        (p.external_id ? options.only!.has(p.external_id) : false)
+  // Fail on missing credentials before a full catalogue fetch, not after.
+  if (!options.dryRun && !searchIndex.isConfigured) {
+    logger.error(
+      "SEARCH_INDEX_ID / SEARCH_INDEX_API_KEY are not set in apps/backend/.env.\n" +
+        "  1. yarn reindex dry-run out=./medusa-products.json\n" +
+        "  2. create the `medusa-products` index in interakt from those documents,\n" +
+        "     importing data/medusa-products-index-mapping.json as its field mapping\n" +
+        "  3. mint an ingestion key scoped to that index with `write` AND `delete`\n" +
+        "  4. record SEARCH_INDEX_ID (the index UUID, from the interakt page URL)\n" +
+        "     and SEARCH_INDEX_API_KEY in apps/backend/.env"
     )
-  }
-  if (options.limit) {
-    products = products.slice(0, options.limit)
-  }
-
-  logger.info(`products: ${products.length} published`)
-
-  if (!products.length) {
-    logger.warn("nothing to index")
     return
   }
 
-  // --- Availability (stocked - reserved, across all locations) -------------
-  const variantIds = unique(
-    products.flatMap((p) => (p.variants ?? []).map((v) => v.id))
-  )
-  const availability = await fetchAvailability(container, variantIds)
-  logger.info(`variants: ${variantIds.length}, availability resolved`)
+  const { result } = await reindexSearchWorkflow(container).run({
+    input: {
+      only: options.only,
+      limit: options.limit,
+      dryRun: options.dryRun,
+      sourceFileName: "medusa-reindex",
+    },
+  })
 
-  // --- Map -----------------------------------------------------------------
-  const warnings: DocumentWarning[] = []
-  const documents: SearchDocument[] = products.map((p) =>
-    toSearchDocument(p, availability, warnings)
-  )
+  const documents = result.documents as SearchDocument[]
+  const warnings = result.warnings as DocumentWarning[]
+
+  logger.info(`products: ${documents.length} published`)
+
+  if (!documents.length) {
+    logger.warn("nothing to index")
+    return
+  }
 
   // --- Coverage report -----------------------------------------------------
   const nulls = (key: keyof SearchDocument) =>
@@ -176,7 +143,7 @@ export default async function reindexSearch({
   )
   const inStock = documents.filter((d) => d.variants.some((v) => v.inStock)).length
   logger.info(
-    `  variants           ${variantCount} (${noPrice} without a ${CURRENCY.toUpperCase()} price)`
+    `  variants           ${variantCount} (${noPrice} without a ${currency.toUpperCase()} price)`
   )
   logger.info(`  products in stock  ${inStock}/${documents.length}`)
 
@@ -225,16 +192,42 @@ export default async function reindexSearch({
     logger.info(JSON.stringify(documents[0], null, 2))
   }
 
-  if (!options.dryRun) {
-    throw new MedusaError(
-      MedusaError.Types.NOT_ALLOWED,
-      "Pushing to the search index is not wired up yet — the index does not exist.\n" +
-        "  1. yarn reindex dry-run out=./medusa-products.json\n" +
-        "  2. create the `medusa-products` index in interakt from those documents\n" +
-        "  3. record SEARCH_INDEX_ID and SEARCH_INDEX_API_KEY in apps/backend/.env"
-    )
+  // --- Push result ---------------------------------------------------------
+  if (options.dryRun) {
+    logger.info(`=== dry run complete in ${since(started)} ===`)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    return
   }
 
-  logger.info(`=== dry run complete in ${since(started)} ===`)
+  const load = result.load
+
+  if (!load) {
+    logger.error("push did not run — no result returned from the workflow")
+    return
+  }
+
+  logger.info(
+    `pushed: ${load.summary.indexed}/${load.summary.total} indexed, ` +
+      `${load.summary.failed} failed, batch(es) ${load.batchIds.join(", ")}`
+  )
+
+  for (const w of load.warnings) {
+    logger.warn(`  index warning: ${w}`)
+  }
+  for (const e of load.errors.slice(0, options.verbose ? load.errors.length : 10)) {
+    logger.error(`  index error: ${e.documentId ?? `#${e.documentIndex}`} — ${e.error}`)
+  }
+  if (!options.verbose && load.errors.length > 10) {
+    logger.error(`  …and ${load.errors.length - 10} more (verbose for all)`)
+  }
+
+  if (!load.success || load.summary.failed > 0) {
+    logger.error(`=== reindex FAILED after ${since(started)} ===`)
+    process.exitCode = 1
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    return
+  }
+
+  logger.info(`=== reindex complete in ${since(started)} ===`)
   await new Promise((resolve) => setTimeout(resolve, 100))
 }

@@ -1,64 +1,12 @@
-import { ContainerRegistrationKeys, MedusaError } from "@medusajs/framework/utils"
-import { MedusaContainer } from "@medusajs/framework"
+import { MedusaError } from "@medusajs/framework/utils"
 import { ImportOptions } from "./types"
 
-/** Split an array into consecutive chunks of at most `size`. */
-export function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = []
-  for (let i = 0; i < items.length; i += size) {
-    out.push(items.slice(i, i + size))
-  }
-  return out
-}
-
-/** Distinct values, first-occurrence order preserved. */
-export function unique<T>(items: T[]): T[] {
-  return [...new Set(items)]
-}
-
 /**
- * `query.graph` reads with an explicit skip/take loop.
- *
- * The store/admin routes apply a default limit; `query.graph` used directly
- * does not paginate for you, so anything that can exceed a few hundred rows
- * (inventory items, variants, option values) must be paged explicitly.
+ * `chunk`, `unique` and `pagedGraph` moved to `src/utils/query.ts` so the
+ * search-indexing workflow steps can share them without importing from a
+ * script. Re-exported here so the importer's call sites stay unchanged.
  */
-export async function pagedGraph<T = Record<string, unknown>>(
-  container: MedusaContainer,
-  config: {
-    entity: string
-    fields: string[]
-    filters?: Record<string, unknown>
-    /**
-     * Pricing/inventory context, e.g.
-     * `{ variants: { calculated_price: QueryContext({ currency_code: "usd" }) } }`.
-     * Without it `calculated_price` cannot be resolved.
-     */
-    context?: Record<string, unknown>
-  },
-  pageSize = 500
-): Promise<T[]> {
-  const query = container.resolve(ContainerRegistrationKeys.QUERY)
-  const out: T[] = []
-  let skip = 0
-
-  for (;;) {
-    const { data, metadata } = await query.graph({
-      ...config,
-      pagination: { skip, take: pageSize },
-    })
-
-    out.push(...(data as T[]))
-
-    const total = metadata?.count ?? data.length
-    skip += pageSize
-    if (out.length >= total || data.length === 0) {
-      break
-    }
-  }
-
-  return out
-}
+export { chunk, unique, pagedGraph } from "../../utils/query"
 
 /**
  * Throw a contextual error instead of letting an `undefined` id travel into a
