@@ -23,9 +23,16 @@ type SideMenuProps = {
   regions: HttpTypes.StoreRegion[] | null
   locales: Locale[] | null
   currentLocale: string | null
+  /** Resolved by the server Nav — this component cannot read server-only env. */
+  searchEnabled?: boolean
 }
 
-const SideMenu = ({ regions, locales, currentLocale }: SideMenuProps) => {
+const SideMenu = ({
+  regions,
+  locales,
+  currentLocale,
+  searchEnabled = false,
+}: SideMenuProps) => {
   const countryToggleState = useToggleState()
   const languageToggleState = useToggleState()
 
@@ -73,7 +80,13 @@ const SideMenu = ({ regions, locales, currentLocale }: SideMenuProps) => {
                       </button>
                     </div>
                     <ul className="flex flex-col gap-6 items-start justify-start">
-                      {Object.entries(SideMenuItems).map(([name, href]) => {
+                      {Object.entries({
+                        Home: SideMenuItems.Home,
+                        Store: SideMenuItems.Store,
+                        ...(searchEnabled ? { Search: "/search" } : {}),
+                        Account: SideMenuItems.Account,
+                        Cart: SideMenuItems.Cart,
+                      }).map(([name, href]) => {
                         return (
                           <li key={name}>
                             <LocalizedClientLink
