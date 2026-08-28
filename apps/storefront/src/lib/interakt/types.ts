@@ -109,3 +109,34 @@ export interface SearchSuggestion {
 export type ApiEnvelope<T> =
   | { success: true; data: T }
   | { success: false; error: string; code?: string; details?: unknown }
+
+/**
+ * Public config for an AI Experience's chat widget (`/api/v1/ai-experiences/widget-config`).
+ */
+export interface ChatWidgetConfig {
+  name: string
+  greeting?: string
+  description?: string
+  suggestedQuestions?: string[]
+  placeholder?: string
+  showBranding?: boolean
+}
+
+/**
+ * One frame of the chat SSE stream (`/api/v1/ai-experiences/chat`).
+ *
+ * Deliberately loose rather than a strict discriminated union: this is an
+ * agentic pipeline with more event types than we react to (`step_complete`,
+ * `action_step`, …), and the exact fields on a given type aren't guaranteed
+ * stable across pipeline versions. We only read `type` plus the handful of
+ * fields the "solid core" chat panel actually uses; anything else is ignored
+ * rather than failing to parse.
+ */
+export interface ChatSSEEvent {
+  type: string
+  text?: string
+  message?: string
+  sessionId?: string
+  stepName?: string
+  [key: string]: unknown
+}

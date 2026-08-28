@@ -25,6 +25,8 @@ type SearchBoxProps = {
   placeholder?: string
   autoFocus?: boolean
   className?: string
+  /** Route segment a submit navigates to. Lets other search UIs (e.g. /search2) reuse this box. */
+  basePath?: string
   "data-testid"?: string
 }
 
@@ -33,6 +35,7 @@ const SearchBox = ({
   placeholder = "Search for jackets, denim, knitwear…",
   autoFocus = false,
   className,
+  basePath = "search",
   "data-testid": dataTestId,
 }: SearchBoxProps) => {
   const router = useRouter()
@@ -102,11 +105,11 @@ const SearchBox = ({
 
       startTransition(() => {
         router.push(
-          `/${countryCode}/search?${QUERY_PARAM}=${encodeURIComponent(trimmed)}`
+          `/${countryCode}/${basePath}?${QUERY_PARAM}=${encodeURIComponent(trimmed)}`
         )
       })
     },
-    [countryCode, router]
+    [basePath, countryCode, router]
   )
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
