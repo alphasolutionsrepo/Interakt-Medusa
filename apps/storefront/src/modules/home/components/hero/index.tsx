@@ -81,6 +81,12 @@ const Hero = ({ products = [], productCount, brandCount }: HeroProps) => {
                   .join("  ·  ")}
               </Text>
             )}
+
+            {isSearchEnabled() && (
+              <Text className="text-xsmall-regular text-ui-fg-muted">
+                Powered by Interakt - AI-Powered Search & Chat
+              </Text>
+            )}
           </div>
 
           {/* Product collage */}
