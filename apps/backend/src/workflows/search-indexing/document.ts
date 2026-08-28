@@ -15,6 +15,9 @@
  * `additionalData` is a `collect`-mode field that hoovers up unmapped keys, so
  * stray keys are not harmless: they land in a searchable field. Emit exactly
  * the keys below.
+ *
+ * The vector source is derived by the index, not sent from here — an
+ * `embeddingtext` field was emitted for a while and has been removed.
  */
 
 /** Fields required from `query.graph` to build a document. */

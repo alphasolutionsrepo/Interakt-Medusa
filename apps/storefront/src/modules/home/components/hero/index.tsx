@@ -1,7 +1,9 @@
+import { isSearchEnabled } from "@lib/util/search-config"
 import { ArrowRight } from "@medusajs/icons"
 import { HttpTypes } from "@medusajs/types"
 import { Heading, Text } from "@modules/common/components/ui"
 import LocalizedClientLink from "@modules/common/components/localized-client-link"
+import SearchBox from "@modules/search/components/search-box"
 import Image from "next/image"
 
 type HeroProps = {
@@ -46,6 +48,12 @@ const Hero = ({ products = [], productCount, brandCount }: HeroProps) => {
               Considered fabrics, honest prices, sizes XS through XXXL.
             </Text>
 
+            {isSearchEnabled() && (
+              <div className="max-w-md pt-2">
+                <SearchBox data-testid="hero-search-input" />
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <LocalizedClientLink
                 href="/categories/women"
@@ -71,6 +79,12 @@ const Hero = ({ products = [], productCount, brandCount }: HeroProps) => {
                 ]
                   .filter(Boolean)
                   .join("  ·  ")}
+              </Text>
+            )}
+
+            {isSearchEnabled() && (
+              <Text className="text-xsmall-regular text-ui-fg-muted">
+                Powered by Interakt - AI-Powered Search & Chat
               </Text>
             )}
           </div>
