@@ -33,6 +33,17 @@ export const isSearchEnabled = (): boolean =>
   process.env.NEXT_PUBLIC_SEARCH_ENABLED !== "false" && !!INTERAKT_SEARCH_TOKEN
 
 /**
+ * AI Experience access token for the chat assistant on /search2.
+ *
+ * A separate Interakt resource from the search experience above — its own
+ * token, its own tool-calling pipeline — so it gets its own env var and its
+ * own enabled check rather than reusing INTERAKT_SEARCH_TOKEN.
+ */
+export const INTERAKT_CHAT_TOKEN = process.env.INTERAKT_CHAT_TOKEN
+
+export const isChatEnabled = (): boolean => !!INTERAKT_CHAT_TOKEN
+
+/**
  * Results per page.
  *
  * Deliberately double the store templates' PRODUCT_LIMIT of 12 — a search
