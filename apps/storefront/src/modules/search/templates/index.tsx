@@ -1,8 +1,6 @@
-import { getChatWidgetConfig } from "@lib/data/chat"
 import { searchProducts } from "@lib/data/search"
 import { isSearchNotConfigured } from "@lib/interakt/errors"
 import { SearchResponse } from "@lib/interakt/types"
-import { isChatEnabled } from "@lib/util/search-config"
 import {
   SearchSortOption,
   SelectedFacets,
@@ -10,7 +8,6 @@ import {
   toSort,
 } from "@lib/util/search-params"
 import { Heading, Text } from "@modules/common/components/ui"
-import ChatWidget from "@modules/chat/components/chat-widget"
 import AiSummary, {
   SummarySource,
 } from "@modules/search/components/ai-summary"
@@ -60,28 +57,23 @@ const SearchTemplate = async ({
   countryCode,
 }: SearchTemplateProps) => {
   const trimmed = query.trim()
-  const chatEnabled = isChatEnabled()
-  const widgetConfig = chatEnabled ? await getChatWidgetConfig() : null
 
   // --- No query yet --------------------------------------------------------
   if (!trimmed) {
     return (
-      <>
-        <Shell>
-          <div className="flex flex-col items-center gap-6 py-16 text-center">
-            <Heading level="h1" className="text-3xl text-ui-fg-base">
-              Search
-            </Heading>
-            <Text className="text-base-regular text-ui-fg-subtle max-w-md">
-              Find pieces by name, brand, colour, material or category.
-            </Text>
-            <div className="w-full max-w-2xl">
-              <SearchBox autoFocus data-testid="search-page-input" />
-            </div>
+      <Shell>
+        <div className="flex flex-col items-center gap-6 py-16 text-center">
+          <Heading level="h1" className="text-3xl text-ui-fg-base">
+            Search
+          </Heading>
+          <Text className="text-base-regular text-ui-fg-subtle max-w-md">
+            Find pieces by name, brand, colour, material or category.
+          </Text>
+          <div className="w-full max-w-2xl">
+            <SearchBox autoFocus data-testid="search-page-input" />
           </div>
-        </Shell>
-        {chatEnabled && <ChatWidget widgetConfig={widgetConfig} />}
-      </>
+        </div>
+      </Shell>
     )
   }
 
@@ -100,26 +92,23 @@ const SearchTemplate = async ({
     const notConfigured = isSearchNotConfigured(e)
 
     return (
-      <>
-        <Shell>
-          <div className="flex flex-col gap-6 max-w-2xl mx-auto">
-            <SearchBox initialQuery={trimmed} />
-            <div className="flex flex-col gap-2 py-10">
-              <Text className="text-large-semi text-ui-fg-base">
-                {notConfigured
-                  ? "Search isn't configured yet"
-                  : "Search is temporarily unavailable"}
-              </Text>
-              <Text className="text-base-regular text-ui-fg-subtle">
-                {notConfigured
-                  ? "Set INTERAKT_SEARCH_TOKEN in apps/storefront/.env.local, then restart the dev server."
-                  : "We couldn't reach the search service. Please try again in a moment."}
-              </Text>
-            </div>
+      <Shell>
+        <div className="flex flex-col gap-6 max-w-2xl mx-auto">
+          <SearchBox initialQuery={trimmed} />
+          <div className="flex flex-col gap-2 py-10">
+            <Text className="text-large-semi text-ui-fg-base">
+              {notConfigured
+                ? "Search isn't configured yet"
+                : "Search is temporarily unavailable"}
+            </Text>
+            <Text className="text-base-regular text-ui-fg-subtle">
+              {notConfigured
+                ? "Set INTERAKT_SEARCH_TOKEN in apps/storefront/.env.local, then restart the dev server."
+                : "We couldn't reach the search service. Please try again in a moment."}
+            </Text>
           </div>
-        </Shell>
-        {chatEnabled && <ChatWidget widgetConfig={widgetConfig} />}
-      </>
+        </div>
+      </Shell>
     )
   }
 
@@ -134,32 +123,29 @@ const SearchTemplate = async ({
   }))
 
   return (
-    <>
-      <Shell>
-        <div className="flex flex-col gap-8">
-          <div className="w-full max-w-2xl mx-auto">
-            <SearchBox initialQuery={trimmed} data-testid="search-page-input" />
-          </div>
-
-          <AiSummary
-            query={trimmed}
-            results={summarySources}
-            totalResults={search.pagination.totalItems}
-          />
-
-          <div className="flex flex-col small:flex-row gap-8 small:gap-12">
-            <SearchFacets facets={search.facets ?? []} sortBy={sortBy} />
-            <SearchResults
-              search={search}
-              query={trimmed}
-              page={page}
-              countryCode={countryCode}
-            />
-          </div>
+    <Shell>
+      <div className="flex flex-col gap-8">
+        <div className="w-full max-w-2xl mx-auto">
+          <SearchBox initialQuery={trimmed} data-testid="search-page-input" />
         </div>
-      </Shell>
-      {chatEnabled && <ChatWidget widgetConfig={widgetConfig} />}
-    </>
+
+        <AiSummary
+          query={trimmed}
+          results={summarySources}
+          totalResults={search.pagination.totalItems}
+        />
+
+        <div className="flex flex-col small:flex-row gap-8 small:gap-12">
+          <SearchFacets facets={search.facets ?? []} sortBy={sortBy} />
+          <SearchResults
+            search={search}
+            query={trimmed}
+            page={page}
+            countryCode={countryCode}
+          />
+        </div>
+      </div>
+    </Shell>
   )
 }
 
