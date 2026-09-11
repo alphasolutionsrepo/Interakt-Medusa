@@ -1,10 +1,15 @@
 "use client"
 
+import { useSpeechRecognition } from "@lib/hooks/use-speech-recognition"
 import { ChatSSEEvent, ChatWidgetConfig } from "@lib/interakt/types"
 import { ChatBubbleLeftRight, CircleArrowUp, Sparkles, Spinner, XMark } from "@medusajs/icons"
 import { Text, clx } from "@modules/common/components/ui"
-import { useRef, useState } from "react"
+import Microphone from "@modules/common/icons/microphone"
+import { useParams, useRouter } from "next/navigation"
+import { useEffect, useRef, useState } from "react"
 import Markdown from "react-markdown"
+import { actionKey, extractActions } from "../../lib/actions"
+import { executeChatAction } from "../../lib/execute-action"
 
 const FALLBACK_SUGGESTIONS = [
   "Show me winter jackets",
@@ -16,6 +21,8 @@ type ChatMessage = {
   content: string
   /** True while an assistant message is still receiving tokens. */
   pending?: boolean
+  /** Short receipt of a page-control action the assistant triggered from this message, e.g. "📦 Added to your cart". */
+  actionNote?: string
 }
 
 type ChatPanelProps = {
@@ -24,6 +31,8 @@ type ChatPanelProps = {
   className?: string
   /** Renders a close (X) button in the header when provided — for a floating/popover host. Docked usage (e.g. /search2) omits it. */
   onClose?: () => void
+  /** Route segment navigate_search pushes to — "search" or "search2", matching whichever page hosts this chat. */
+  basePath?: string
 }
 
 /**
@@ -66,12 +75,105 @@ const markdownComponents = {
     ) : null,
 }
 
-const ChatPanel = ({ enabled, widgetConfig, className, onClose }: ChatPanelProps) => {
+/** Kept short — this rides along on every follow-up message's token cost. */
+const MAX_RECAP_ASSISTANT_LENGTH = 400
+
+/**
+ * Interakt's chat API takes only `{message, sessionId}` — there's no separate
+ * history field — so the only way to guarantee the model has what it needs is
+ * to fold it into the message text itself. This is a deliberate safety net
+ * alongside `sessionId` continuation, not a replacement for it: when session
+ * memory works, this is redundant; when it doesn't (observed intermittently,
+ * cause not yet pinned down), the current turn still carries enough to
+ * resolve "it"/"that one" against the last thing discussed.
+ */
+function buildContextRecap(messages: ChatMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 1; i--) {
+    if (messages[i].role !== "assistant" || messages[i - 1].role !== "user") {
+      continue
+    }
+
+    const userText = messages[i - 1].content.trim()
+    const assistantText = messages[i].content
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, "") // strip markdown image syntax — pure noise here
+      .trim()
+      .slice(0, MAX_RECAP_ASSISTANT_LENGTH)
+
+    if (!userText || !assistantText) return null
+
+    return `[Earlier in this conversation:\nYou: ${userText}\nAssistant: ${assistantText}]`
+  }
+
+  return null
+}
+
+const ChatPanel = ({
+  enabled,
+  widgetConfig,
+  className,
+  onClose,
+  basePath = "search",
+}: ChatPanelProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
   const [statusLabel, setStatusLabel] = useState<string | null>(null)
   const sessionIdRef = useRef<string | undefined>(undefined)
+  const router = useRouter()
+  const { countryCode } = useParams() as { countryCode: string }
+  const scrollAnchorRef = useRef<HTMLDivElement>(null)
+  const speech = useSpeechRecognition()
+
+  // Keyed by basePath so the floating widget and /search2's docked panel —
+  // already independent conversations — persist independently too.
+  const storageKey = `chat:${basePath}`
+
+  // Keep the latest message (including one still streaming in) in view —
+  // otherwise a reply arrives below the fold and the visitor has to notice
+  // and scroll down themselves before they can read it or reply.
+  useEffect(() => {
+    scrollAnchorRef.current?.scrollIntoView({ block: "end" })
+  }, [messages, statusLabel])
+
+  // Restore a conversation left over from before a remount — sessionStorage
+  // isn't available during SSR, so this has to be a post-mount effect rather
+  // than a lazy useState initializer. A one-frame flash from empty to
+  // restored on reopen is an acceptable trade-off for that.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(storageKey)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as {
+        messages?: ChatMessage[]
+        sessionId?: string
+      }
+      if (Array.isArray(parsed.messages) && parsed.messages.length > 0) {
+        setMessages(parsed.messages)
+      }
+      if (parsed.sessionId) {
+        sessionIdRef.current = parsed.sessionId
+      }
+    } catch {
+      // Corrupt or inaccessible storage — just start fresh.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Persist on every change, so the conversation survives whatever caused an
+  // in-memory reset (a remount we haven't pinned down, a reload, a browser
+  // back/forward) rather than only avoiding the one cause we could identify.
+  useEffect(() => {
+    if (messages.length === 0) return
+    try {
+      sessionStorage.setItem(
+        storageKey,
+        JSON.stringify({ messages, sessionId: sessionIdRef.current })
+      )
+    } catch {
+      // Storage full/unavailable (private browsing, etc.) — conversation
+      // just won't survive a reset; not worth failing anything over.
+    }
+  }, [messages, storageKey])
 
   const assistantName = widgetConfig?.name || "Fashion Assistant"
   const greeting = widgetConfig?.greeting || `Hi! I'm ${assistantName}.`
@@ -87,6 +189,22 @@ const ChatPanel = ({ enabled, widgetConfig, className, onClose }: ChatPanelProps
     const trimmed = text.trim()
     if (!trimmed || isStreaming) return
 
+    if (messages.length > 0 && !sessionIdRef.current) {
+      // Should be unreachable — sessionIdRef is set from the prior turn's
+      // `done` event before the input re-enables. If this ever fires, it
+      // confirms a follow-up went out as a brand new conversation, which
+      // reads to the assistant as if it had never seen any prior message.
+      console.warn(
+        "[chat] sending a follow-up with no session id — conversation context will be lost",
+        { basePath }
+      )
+    }
+
+    // Captured from the pre-send transcript — a safety net so this turn
+    // carries what it needs even if session-based memory doesn't.
+    const recap = messages.length >= 2 ? buildContextRecap(messages) : null
+    const outgoingMessage = recap ? `${recap}\n\n${trimmed}` : trimmed
+
     setInput("")
     setMessages((prev) => [
       ...prev,
@@ -95,17 +213,6 @@ const ChatPanel = ({ enabled, widgetConfig, className, onClose }: ChatPanelProps
     ])
     setIsStreaming(true)
     setStatusLabel("Thinking…")
-
-    const appendToAssistant = (chunk: string) => {
-      setMessages((prev) => {
-        const next = [...prev]
-        const last = next[next.length - 1]
-        if (last?.role === "assistant") {
-          next[next.length - 1] = { ...last, content: last.content + chunk }
-        }
-        return next
-      })
-    }
 
     const setAssistantContent = (content: string) => {
       setMessages((prev) => {
@@ -118,12 +225,47 @@ const ChatPanel = ({ enabled, widgetConfig, className, onClose }: ChatPanelProps
       })
     }
 
+    const setAssistantNote = (note: string) => {
+      setMessages((prev) => {
+        const next = [...prev]
+        const last = next[next.length - 1]
+        if (last?.role === "assistant") {
+          next[next.length - 1] = { ...last, actionNote: note }
+        }
+        return next
+      })
+    }
+
+    // Raw (unstripped) accumulated text for this turn — action fences are
+    // parsed out of this, not out of what's rendered, so a fence split across
+    // multiple `content` chunks still gets recognized once it's complete.
+    let rawBuffer = ""
+    const executedThisTurn = new Set<string>()
+
+    const appendToAssistant = (chunk: string) => {
+      rawBuffer += chunk
+      const { actions, cleanedContent } = extractActions(rawBuffer)
+      setAssistantContent(cleanedContent)
+
+      for (const action of actions) {
+        const key = actionKey(action)
+        if (executedThisTurn.has(key)) continue
+        executedThisTurn.add(key)
+
+        executeChatAction(action, { router, countryCode, basePath })
+          .then((note) => {
+            if (note) setAssistantNote(note)
+          })
+          .catch(() => setAssistantNote("Something went wrong with that."))
+      }
+    }
+
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          message: trimmed,
+          message: outgoingMessage,
           sessionId: sessionIdRef.current,
         }),
       })
@@ -252,7 +394,7 @@ const ChatPanel = ({ enabled, widgetConfig, className, onClose }: ChatPanelProps
         )}
       </div>
 
-      <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 min-h-[320px] max-h-[520px]">
+      <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 min-h-0">
         {messages.length === 0 && (
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1">
@@ -304,11 +446,17 @@ const ChatPanel = ({ enabled, widgetConfig, className, onClose }: ChatPanelProps
                       {statusLabel ?? "Thinking…"}
                     </span>
                   ) : null}
+                  {message.actionNote && (
+                    <Text className="text-small-regular text-ui-fg-muted">
+                      {message.actionNote}
+                    </Text>
+                  )}
                 </div>
               </div>
             )}
           </div>
         ))}
+        <div ref={scrollAnchorRef} />
       </div>
 
       <form
@@ -326,6 +474,27 @@ const ChatPanel = ({ enabled, widgetConfig, className, onClose }: ChatPanelProps
           disabled={isStreaming}
           className="flex-1 h-10 rounded-full border border-ui-border-base bg-ui-bg-subtle px-4 text-base-regular text-ui-fg-base placeholder:text-ui-fg-muted focus:outline-none disabled:opacity-60"
         />
+        {speech.isSupported && (
+          <button
+            type="button"
+            disabled={isStreaming}
+            aria-label={speech.isListening ? "Stop voice input" : "Speak your message"}
+            aria-pressed={speech.isListening}
+            onClick={() =>
+              speech.isListening
+                ? speech.stop()
+                : speech.start((transcript) => setInput(transcript))
+            }
+            className={clx(
+              "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40",
+              speech.isListening
+                ? "bg-red-500 text-white animate-pulse"
+                : "text-ui-fg-muted hover:bg-ui-bg-subtle"
+            )}
+          >
+            <Microphone size={18} />
+          </button>
+        )}
         <button
           type="submit"
           disabled={isStreaming || !input.trim()}

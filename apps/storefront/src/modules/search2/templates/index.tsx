@@ -71,6 +71,7 @@ const Search2Template = async ({
           <ChatPanel
             enabled={chatEnabled}
             widgetConfig={widgetConfig}
+            basePath="search2"
             className="small:w-80 xl:w-96 shrink-0"
           />
         </div>
@@ -134,6 +135,7 @@ const Search2Template = async ({
         <ChatPanel
           enabled={chatEnabled}
           widgetConfig={widgetConfig}
+          basePath="search2"
           className="small:w-80 xl:w-96 shrink-0 small:sticky small:top-8 small:self-start"
         />
       </div>

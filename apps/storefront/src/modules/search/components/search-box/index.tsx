@@ -2,10 +2,12 @@
 
 import { autocompleteSuggestions } from "@lib/data/search"
 import { useDebounce } from "@lib/hooks/use-debounce"
+import { useSpeechRecognition } from "@lib/hooks/use-speech-recognition"
 import { SearchSuggestion } from "@lib/interakt/types"
 import { QUERY_PARAM } from "@lib/util/search-params"
 import { MagnifyingGlass } from "@medusajs/icons"
 import { clx } from "@modules/common/components/ui"
+import Microphone from "@modules/common/icons/microphone"
 import { useParams, useRouter } from "next/navigation"
 import {
   useCallback,
@@ -60,6 +62,7 @@ const SearchBox = ({
 
   const listboxId = useId()
   const debouncedQuery = useDebounce(query, DEBOUNCE_MS)
+  const speech = useSpeechRecognition()
 
   useEffect(() => {
     const trimmed = debouncedQuery.trim()
@@ -189,6 +192,30 @@ const SearchBox = ({
             data-testid={dataTestId}
             className="flex-1 h-full bg-transparent text-base-regular text-ui-fg-base placeholder:text-ui-fg-muted focus:outline-none [&::-webkit-search-cancel-button]:appearance-none"
           />
+
+          {speech.isSupported && (
+            <button
+              type="button"
+              aria-label={speech.isListening ? "Stop voice search" : "Search by voice"}
+              aria-pressed={speech.isListening}
+              onClick={() =>
+                speech.isListening
+                  ? speech.stop()
+                  : speech.start((transcript) => {
+                      setQuery(transcript)
+                      submit(transcript)
+                    })
+              }
+              className={clx(
+                "shrink-0 flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+                speech.isListening
+                  ? "bg-red-500 text-white animate-pulse"
+                  : "text-ui-fg-muted hover:bg-ui-bg-subtle"
+              )}
+            >
+              <Microphone size={18} />
+            </button>
+          )}
 
           <button
             type="submit"

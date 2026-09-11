@@ -26,6 +26,9 @@ const nextConfig = {
   },
   images: {
     unoptimized: true,
+    // Required starting in Next.js 16 for any `quality` prop used on <Image>
+    // (currently just the product thumbnail's quality={50}).
+    qualities: [50],
     remotePatterns: [
       {
         protocol: "http",
